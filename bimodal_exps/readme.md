@@ -26,7 +26,7 @@ CUDA_VISIBLE_DEVICES=6,7 python -m torch.distributed.launch --nproc_per_node=2 -
     --output_dir output/isogclr_${data}_g${gamma}_rho${rho}_0.01 \
     --init_model \
     --use_amp \
-    --ita_type isogclr \
+    --ita_type new_isogclr \
     --tau_init 0.01 \
     --sogclr_gamma ${gamma} --rho_init ${rho} \
     --eta_init 0.03 --eta_sched const > ${data}_isogclr_g${gamma}_rho${rho}_0.01.log &
