@@ -6,6 +6,31 @@
 - transformers 4.11.0
 
 
+## Credits
+Our implementation is based on [ALBEF](https://github.com/salesforce/ALBEF).
+
+
+## Data
+Our bimodal experiments need three image-text datasets: CC3M ([download](https://ai.google.com/research/ConceptualCaptions/download)), MS-COCO ([download](https://cocodataset.org/#download)), and Flickr30K ([download](https://shannon.cs.illinois.edu/DenotationGraph/)). Besides, one also need the following files to build pytorch datasets,  [clip_train](https://drive.google.com/drive/folders/1hAd0956xIztfwq0WrWLTGBx8sNuye595?usp=sharing) and [downstream](https://drive.google.com/drive/folders/1hAd0956xIztfwq0WrWLTGBx8sNuye595?usp=sharing), for pretraining and downstream tasks, respectively.
+
+After downloading the data, one need to organize the data folder as follows:
+```
+.
++--cc3m
+|  +--cc3m_train
+|  +--cc3m_valid
++--coco
+|  +--train2014
+|  +--val2014
+|  +--test2015
++--flickr30k
+|  +--flickr30k_images
++--clip_train 
+|
++--downstream
+```
+
+
 ## Training
 Below is an example for self-supervised pre-training of a CLIP model on CC3M with 2 GPUs.
 
@@ -33,7 +58,7 @@ CUDA_VISIBLE_DEVICES=6,7 python -m torch.distributed.launch --nproc_per_node=2 -
 ```
 
 
-## Linear evaluation
+## Evaluation
 After pre-training, we can evaluate the pre-trained models on two downstream tasks: zero-shot retrieval on ms-coco and flickr30k, and zero-shot image classification on CIFAR10, CIFAR100, and ImageNet1k, as follows:
 ```bash
 TRANSFORMERS_OFFLINE=1
