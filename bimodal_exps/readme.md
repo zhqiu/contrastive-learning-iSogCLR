@@ -11,20 +11,23 @@ Our implementation is based on [ALBEF](https://github.com/salesforce/ALBEF).
 
 
 ## Data
-Our bimodal experiments need three image-text datasets: CC3M ([download](https://ai.google.com/research/ConceptualCaptions/download)), MS-COCO ([download](https://cocodataset.org/#download)), and Flickr30K ([download](https://shannon.cs.illinois.edu/DenotationGraph/)). Besides, one also need the following files to build pytorch datasets,  [clip_train](https://drive.google.com/drive/folders/1hAd0956xIztfwq0WrWLTGBx8sNuye595?usp=sharing) and [downstream](https://drive.google.com/drive/folders/1hAd0956xIztfwq0WrWLTGBx8sNuye595?usp=sharing), for pretraining and downstream tasks, respectively.
+Our bimodal experiments need three image-text datasets: CC3M ([download](https://ai.google.com/research/ConceptualCaptions/download)), MS-COCO ([download](https://cocodataset.org/#download)), and Flickr30K ([download](https://shannon.cs.illinois.edu/DenotationGraph/)). Besides, one also needs the following files to build pytorch datasets,  [clip_train](https://drive.google.com/drive/folders/1hAd0956xIztfwq0WrWLTGBx8sNuye595?usp=sharing) and [downstream](https://drive.google.com/drive/folders/1hAd0956xIztfwq0WrWLTGBx8sNuye595?usp=sharing), for pretraining and downstream tasks, respectively.
 
-After downloading the data, one need to organize the data folder as follows:
+After downloading the data, one needs to organize the data folder as follows:
 ```
 .
 +--cc3m
 |  +--cc3m_train
 |  +--cc3m_valid
+|
 +--coco
 |  +--train2014
 |  +--val2014
 |  +--test2015
+|
 +--flickr30k
 |  +--flickr30k_images
+|
 +--clip_train 
 |
 +--downstream
