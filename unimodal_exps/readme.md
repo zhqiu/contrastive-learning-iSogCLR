@@ -4,6 +4,10 @@
 - torchvision 0.11 
 
 
+## Credits
+Our implementation is based on [SupContrast](https://github.com/HobbitLong/SupContrast/).
+
+
 ## Training  
 Below is a quick example for self-supervised pre-training of a ResNet-18 model on CIFAR100 with 1 GPU.
 
