@@ -9,7 +9,7 @@ If you find this tutorial helpful, please cite our paper:
   title={Not All Semantics are Created Equal: Contrastive Self-supervised Learning with Automatic Temperature Individualization},
   author={Zi-Hao Qiu, Quanqi Hu, Zhuoning Yuan, Denny Zhou, Lijun Zhang, and Tianbao Yang},
   booktitle={International Conference on Machine Learning},
-  pages={},
+  pages={TBD},
   year={2023},
   organization={PMLR}
 }
