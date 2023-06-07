@@ -388,28 +388,10 @@ class VICReg_Loss(nn.Module):
 class TempGenerator(torch.nn.Module):  # try three-layer MLP
     def __init__(self, feature_dim, M=256, tau_min=0.005, tau_max=1.0, dropout_rate=0.5):
         super(TempGenerator, self).__init__()
-
-        self.feature_dim = feature_dim
-        self.M = M
-        self.tau_min, self.tau_max = tau_min, tau_max
-
-        self.proj = nn.Linear(self.feature_dim, self.feature_dim)
-        self.prototypes = nn.Linear(self.feature_dim, self.M)
-        self.linear = nn.Linear(self.M, 1)
-
-        self.dropout1 = nn.Dropout(dropout_rate)
-        self.dropout2 = nn.Dropout(dropout_rate)
+        pass
 
     def forward(self, x):
-        # assume: x [bsz, dim]; pos_sim [bsz, 1]
-        feat = torch.sigmoid(self.proj(x))                      # [bsz, feature_dim]
-        feat = self.dropout1(feat)
-        proto = self.prototypes(feat)                                     # [bsz, M]
-        weights = nn.Softmax(dim=1)(proto / np.sqrt(self.feature_dim))
-        attn_result = self.dropout2(torch.sigmoid(weights * proto))
-        tau = torch.sigmoid(0.2 * self.linear(attn_result))        # [bsz, 1]
-
-        return (self.tau_max - self.tau_min) * tau.squeeze() + self.tau_min # [bsz]
+        pass
 
 
 # try to use temperature generator in place of individualized temperatures
