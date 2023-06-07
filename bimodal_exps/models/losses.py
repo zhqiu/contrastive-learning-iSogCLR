@@ -385,7 +385,7 @@ class VICReg_Loss(nn.Module):
         return loss
 
 
-class TempGenerator(torch.nn.Module):  # try three-layer MLP
+class TempGenerator(torch.nn.Module):
     def __init__(self, feature_dim, M=256, tau_min=0.005, tau_max=1.0, dropout_rate=0.5):
         super(TempGenerator, self).__init__()
         pass
