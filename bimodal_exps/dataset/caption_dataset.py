@@ -3,7 +3,6 @@ import os
 import random
 
 from torch.utils.data import Dataset
-import torchvision
 
 from PIL import Image
 from PIL import ImageFile
@@ -33,16 +32,12 @@ class re_train_dataset(Dataset):
     def __len__(self):
         return len(self.ann)
     
-    def __getitem__(self, index, enable_transform=True):    
+    def __getitem__(self, index):    
         ann = self.ann[index]
         image_path = os.path.join(self.image_root, ann['image'])
 
         image = Image.open(image_path).convert('RGB')   
-
-        if enable_transform:
-            image = self.transform(image)
-        else:
-            image = torchvision.transforms.ToTensor()(image)
+        image = self.transform(image)
         
         caption = pre_caption(ann['caption'], self.max_words) 
 
@@ -66,34 +61,19 @@ class re_eval_dataset(Dataset):
         for img_id, ann in enumerate(self.ann):
             self.image.append(ann['image'])
             self.img2txt[img_id] = []
-
-            if type(ann['caption']) == list:  # for coco and flickr datasets
-                for i, caption in enumerate(ann['caption']):
-                    self.text.append(pre_caption(caption, self.max_words))
-                    self.img2txt[img_id].append(txt_id)
-                    self.txt2img[txt_id] = img_id
-                    txt_id += 1
-
-            elif type(ann['caption']) == str: # for sbu dataset
-                self.text.append(pre_caption(ann['caption'], self.max_words))
+            for i, caption in enumerate(ann['caption']):
+                self.text.append(pre_caption(caption,self.max_words))
                 self.img2txt[img_id].append(txt_id)
                 self.txt2img[txt_id] = img_id
                 txt_id += 1
-
-            else:
-                assert 0
                                     
     def __len__(self):
         return len(self.image)
     
-    def __getitem__(self, index, enable_transform=True):    
+    def __getitem__(self, index):    
         image_path = os.path.join(self.image_root, self.ann[index]['image'])        
         image = Image.open(image_path).convert('RGB')    
-        
-        if enable_transform:
-            image = self.transform(image)
-        else:
-            image = torchvision.transforms.ToTensor()(image)
+        image = self.transform(image)  
 
         return image, index
       

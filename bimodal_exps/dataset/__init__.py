@@ -28,7 +28,7 @@ def create_train_dataset(dataset, args):
         assert 0, dataset + " is not supported."
 
 
-def create_val_dataset(dataset, args, val_file, val_image_root, test_file=None):
+def create_val_dataset(dataset, args, val_file, test_file, val_image_root):
     
     normalize = transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
 
@@ -40,12 +40,8 @@ def create_val_dataset(dataset, args, val_file, val_image_root, test_file=None):
     
     if dataset=='re':
         val_dataset = re_eval_dataset(val_file, test_transform, val_image_root)  
-
-        if test_file is not None:
-            test_dataset = re_eval_dataset(test_file, test_transform, val_image_root)                
-            return val_dataset, test_dataset
-        else:
-            return val_dataset
+        test_dataset = re_eval_dataset(test_file, test_transform, val_image_root)                
+        return val_dataset, test_dataset
 
     else:
         assert 0, dataset + " is not supported."
@@ -78,7 +74,6 @@ def create_val_loader(datasets, samplers, batch_size, num_workers, collate_fns):
             shuffle=shuffle,
             collate_fn=collate_fn,
             drop_last=drop_last,
-            prefetch_factor=12
         )              
         loaders.append(loader)
     return loaders  
