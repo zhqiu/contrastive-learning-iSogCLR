@@ -22,26 +22,19 @@ except ImportError:
     has_apex = False
 
 
-
-def add_weight_decay(model, args, weight_decay=1e-5, skip_list=()):
+def add_weight_decay(model, weight_decay=1e-5, skip_list=()):
     decay = []
     no_decay = []
-    temp_net = []
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue  # frozen weights
-        if 'temp_gen' in name:
-            print("parameters in temp_net:", name, param.shape)
-            temp_net.append(param)
-        elif len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
+        if len(param.shape) == 1 or name.endswith(".bias") or name in skip_list:
             no_decay.append(param)
         else:
             decay.append(param)
     return [
         {'params': no_decay, 'weight_decay': 0.},
-        {'params': decay, 'weight_decay': weight_decay},
-        {'params': temp_net, 'weight_decay': args.wd_temp_net}]
-         
+        {'params': decay, 'weight_decay': weight_decay}]
 
 
 def create_optimizer(args, model, filter_bias_and_bn=True):
@@ -51,7 +44,7 @@ def create_optimizer(args, model, filter_bias_and_bn=True):
         skip = {}
         if hasattr(model, 'no_weight_decay'):
             skip = model.no_weight_decay()
-        parameters = add_weight_decay(model, args, weight_decay, skip)
+        parameters = add_weight_decay(model, weight_decay, skip)
         weight_decay = 0.
     else:
         parameters = model.parameters()
