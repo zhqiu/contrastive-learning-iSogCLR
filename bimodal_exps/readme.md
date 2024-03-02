@@ -44,7 +44,7 @@ train_image_root=cc3m
 data=cc3m
 train_file=clip_train/${data}_train_new.json
 gamma=0.8
-rho=8.0
+rho=6.0
 
 CUDA_VISIBLE_DEVICES=6,7 python -m torch.distributed.launch --nproc_per_node=2 --master_port=9800 \
     --use_env clip.py \
