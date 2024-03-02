@@ -5,10 +5,7 @@ warnings.warn = warn
 
 import pickle
 import argparse
-
 import os
-os.environ["TOKENIZERS_PARALLELISM"] = "true"
-
 import numpy as np
 import random
 import time
@@ -17,33 +14,28 @@ import json
 from pathlib import Path
 
 import torch
-import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
 
 from models.model_clip import CLIP
-from transformers import AutoTokenizer, RobertaTokenizer
+from transformers import AutoTokenizer
 
 import utils
-import shutil
 from dataset import create_train_dataset, create_val_dataset, create_sampler, create_train_loader, create_val_loader
 from scheduler import create_scheduler
 from optim import create_optimizer
 
-from tqdm import tqdm
 
-
-def train(model, data_loader, optimizer, tokenizer, epoch, max_epoch, warmup_steps, device, scheduler, grad_scaler, args):
+def train(model, data_loader, optimizer, tokenizer, epoch, max_epoch, warmup_steps, device, scheduler, grad_scaler):
     # train
-    model.train()
+    model.train()  
     
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    metric_logger.add_meter('lr_temp_net', utils.SmoothedValue(window_size=1, fmt='{value:.8f}'))
     metric_logger.add_meter('loss_ita', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
     metric_logger.add_meter('avg_image_tau', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
     metric_logger.add_meter('avg_text_tau', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
@@ -52,93 +44,52 @@ def train(model, data_loader, optimizer, tokenizer, epoch, max_epoch, warmup_ste
     metric_logger.add_meter('grad_tau_text', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
     metric_logger.add_meter('b_I', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
     metric_logger.add_meter('b_T', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
-    metric_logger.add_meter('v', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
-    metric_logger.add_meter('lamda', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
-    metric_logger.add_meter('weights_image_pos', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
-    metric_logger.add_meter('weights_text_pos', utils.SmoothedValue(window_size=1, fmt='{value:.4f}'))
-
     header = 'Train Epoch: [{}]'.format(epoch)
     print_freq = 50
     step_size = 100
     warmup_iterations = warmup_steps*step_size  
-
+    
     for i,(image, text, idx, text_idx) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         optimizer.zero_grad()
 
         image = image.to(device, non_blocking=True)   
         idx = idx.to(device, non_blocking=True)
         text_idx = text_idx.to(device, non_blocking=True)   
-        text_input = tokenizer(text, padding='max_length', truncation=True, max_length=30, return_tensors="pt").to(device)
-        
-        # set learning rate for temperature network
-        optimizer.param_groups[2]["lr"] = optimizer.param_groups[0]["lr"] / 10.0
-
+        text_input = tokenizer(text, padding='max_length', truncation=True, max_length=30, return_tensors="pt").to(device)  
+            
         if grad_scaler is None:
-            loss_ita, info_dict = model(image, text_input, idx=idx, text_idx=text_idx, epoch=epoch, max_epoch=max_epoch)
+            loss_ita, avg_image_tau, avg_text_tau, cur_eta, grad_tau_image, grad_tau_text, b_I, b_T = model(image, text_input, idx=idx, text_idx=text_idx, epoch=epoch, max_epoch=max_epoch)
             loss_ita.backward()
             optimizer.step()
         else:
             with torch.cuda.amp.autocast():
-                loss_ita, info_dict = model(image, text_input, idx=idx, text_idx=text_idx, epoch=epoch, max_epoch=max_epoch)
+                loss_ita, avg_image_tau, avg_text_tau, cur_eta, grad_tau_image, grad_tau_text, b_I, b_T = model(image, text_input, idx=idx, text_idx=text_idx, epoch=epoch, max_epoch=max_epoch)
             grad_scaler.scale(loss_ita).backward()
             grad_scaler.step(optimizer)
             grad_scaler.update()
         
         metric_logger.update(loss_ita=loss_ita.item())
 
-        if args.ita_type in ['sogclr_dro', 'isogclr_new']:
-            metric_logger.update(avg_image_tau=info_dict['avg_image_tau'])
-            metric_logger.update(avg_text_tau=info_dict['avg_text_tau'])
-            metric_logger.update(cur_eta=info_dict['cur_eta'])
-            metric_logger.update(grad_tau_image=info_dict['grad_tau_image'])
-            metric_logger.update(grad_tau_text=info_dict['grad_tau_text'])
-            metric_logger.update(b_I=info_dict['b_I'])
-            metric_logger.update(b_T=info_dict['b_T'])
-            metric_logger.update(weights_image_pos=0.0)
-            metric_logger.update(weights_text_pos=0.0)
-            metric_logger.update(v=0.0)
-            metric_logger.update(lamda=0.0)
-        elif args.ita_type == 'isogclr_new_v2':
-            metric_logger.update(avg_image_tau=info_dict['avg_image_tau'])
-            metric_logger.update(avg_text_tau=info_dict['avg_text_tau'])
-            metric_logger.update(cur_eta=info_dict['cur_eta'])
-            metric_logger.update(grad_tau_image=info_dict['grad_tau_image'])
-            metric_logger.update(grad_tau_text=info_dict['grad_tau_text'])
-            metric_logger.update(b_I=info_dict['b_I'])
-            metric_logger.update(b_T=info_dict['b_T'])
-            metric_logger.update(weights_image_pos=0.0)
-            metric_logger.update(weights_text_pos=0.0)
-            metric_logger.update(v=info_dict['v'])
-            metric_logger.update(lamda=info_dict['lamda'])
-        elif args.ita_type == 'sogclr':
-            metric_logger.update(avg_image_tau=info_dict['avg_image_tau'])
-            metric_logger.update(avg_text_tau=info_dict['avg_text_tau'])
-            metric_logger.update(weights_image_pos=0.0)
-            metric_logger.update(weights_text_pos=0.0)
-            metric_logger.update(cur_eta=0.0)
-            metric_logger.update(grad_tau_image=0.0)
-            metric_logger.update(grad_tau_text=0.0)
-            metric_logger.update(b_I=0.0)
-            metric_logger.update(b_T=0.0)
-            metric_logger.update(v=0.0)
-            metric_logger.update(lamda=info_dict['lamda'])
+        if cur_eta is not None:
+            metric_logger.update(avg_image_tau=avg_image_tau)
+            metric_logger.update(avg_text_tau=avg_text_tau)
+            metric_logger.update(cur_eta=cur_eta)
+            metric_logger.update(grad_tau_image=grad_tau_image)
+            metric_logger.update(grad_tau_text=grad_tau_text)
+            metric_logger.update(b_I=b_I)
+            metric_logger.update(b_T=b_T)
         else:
-            metric_logger.update(avg_image_tau=info_dict['avg_image_tau'])
-            metric_logger.update(avg_text_tau=info_dict['avg_text_tau'])
+            metric_logger.update(avg_image_tau=avg_image_tau)
+            metric_logger.update(avg_text_tau=avg_text_tau)
             metric_logger.update(cur_eta=0.0)
             metric_logger.update(grad_tau_image=0.0)
             metric_logger.update(grad_tau_text=0.0)
-            metric_logger.update(weights_image_pos=0.0)
-            metric_logger.update(weights_text_pos=0.0)
             metric_logger.update(b_I=0.0)
             metric_logger.update(b_T=0.0)
-            metric_logger.update(v=0.0)
-            metric_logger.update(lamda=0.0)
 
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
-        metric_logger.update(lr_temp_net=optimizer.param_groups[2]["lr"])
         if epoch==0 and i%step_size==0 and i<=warmup_iterations: 
-            scheduler.step(i//step_size)
+            scheduler.step(i//step_size)     
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -362,30 +313,11 @@ def main(args):
     #### Dataset #### 
     print("Creating retrieval dataset")
     train_dataset = create_train_dataset('re', args)
-    val_coco_dataset, test_coco_dataset = create_val_dataset('re', args, args.val_coco_file, args.coco_image_root, args.test_coco_file)
-    val_flickr_dataset, test_flickr_dataset = create_val_dataset('re', args, args.val_flickr_file, args.flickr_image_root, args.test_flickr_file)
-    sbu_dataset = create_val_dataset('re', args, args.sbu_file, args.sbu_image_root)
+    val_coco_dataset, test_coco_dataset = create_val_dataset('re', args, args.val_coco_file, args.test_coco_file, args.coco_image_root)
+    val_flickr_dataset, test_flickr_dataset = create_val_dataset('re', args, args.val_flickr_file, args.test_flickr_file, args.flickr_image_root)
     print("len of train_dataset:", len(train_dataset))
     print("len of coco val/test:", len(val_coco_dataset), len(test_coco_dataset))
     print("len of flickr val/test:", len(val_flickr_dataset), len(test_flickr_dataset))
-    print("len of sbu data:", len(sbu_dataset))
-
-    if args.extract_data:
-        idx_list = []
-        data_dir = os.path.join(args.output_dir, '')
-        Path(data_dir).mkdir(parents=True, exist_ok=True)
-
-        for idx in tqdm(idx_list):
-            image, text, _, _ = train_dataset.__getitem__(idx, enable_transform=False)
-            torchvision.utils.save_image(image, fp=os.path.join(data_dir, str(idx)+':'+text+'.png'))
-            
-        shutil.make_archive(data_dir, 'zip', data_dir)
-
-        assert 0
-
-    num_training = int(args.train_frac * len(train_dataset))
-    train_dataset = Subset(train_dataset, list(range(num_training)))
-
 
     if args.distributed:
         num_tasks = utils.get_world_size()
@@ -395,17 +327,12 @@ def main(args):
         samplers = [None, None, None]
 
     train_loader = create_train_loader(train_dataset, samplers[0], args.batch_size_train, 8, None)
-
     val_coco_loader, test_coco_loader = create_val_loader([val_coco_dataset, test_coco_dataset], samplers[1:], 
                                                           [args.batch_size_test]*2, [8]*2, [None]*2)
     val_flickr_loader, test_flickr_loader = create_val_loader([val_flickr_dataset, test_flickr_dataset], samplers[1:], 
                                                               [args.batch_size_test]*2, [8]*2, [None]*2)
-    sbu_loader= create_val_loader([sbu_dataset], [None], [args.batch_size_test], [32], [None])[0]
        
-    if args.text_encoder == 'roberta-large':
-        tokenizer = RobertaTokenizer.from_pretrained(args.text_encoder)
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(args.text_encoder, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.text_encoder, local_files_only=True)
 
     #### Zero-shot transfer ####
     zeroshot_dataloader = create_zeroshot_dataloader(dataset_name=args.zs_dataset, data_folder=args.zs_datafolder, image_size=args.image_res)
@@ -413,47 +340,17 @@ def main(args):
     #### Model #### 
     print("Creating model")
     model = CLIP(image_encoder=args.image_encoder, text_encoder=args.text_encoder, embed_dim=args.embed_dim, init_model=args.init_model, bsz=args.batch_size_train*args.world_size,
-                  world_size=args.world_size, ita_type=args.ita_type, sogclr_gamma=args.sogclr_gamma, rho_I=args.rho_I, rho_T=args.rho_T, tau_init=args.tau_init,
-                  eta_init=args.eta_init, beta_u=args.beta_u, temp=args.temp, learnable_temp=args.learnable_temp,
-                  vicreg_sim_coeff=args.vicreg_sim_coeff, vicreg_std_coeff=args.vicreg_std_coeff, personalized_tau=args.personalized_tau, 
-                  use_temp_net=args.isogclr_temp_net, alpha=args.alpha)
+                  world_size=args.world_size, ita_type=args.ita_type, sogclr_gamma=args.sogclr_gamma, rho_init=args.rho_init, tau_init=args.tau_init,
+                  eta_init=args.eta_init, eta_sched=args.eta_sched, eta_exp_gamma=args.eta_exp_gamma, beta_u=args.beta_u, temp=args.temp, learnable_temp=args.learnable_temp,
+                  vicreg_sim_coeff=args.vicreg_sim_coeff, vicreg_std_coeff=args.vicreg_std_coeff, personalized_tau=args.personalized_tau, enable_surrogate=args.enable_surrogate)
     model = model.to(device)
 
-    if args.evaluate or args.ita_type == 'isogclr_denoise':
+    if args.evaluate:
         assert len(args.checkpoint) > 0
         checkpoint = torch.load(args.checkpoint, map_location='cpu') 
         state_dict = checkpoint['model']             
         model.load_state_dict(state_dict, strict=False)  
         print('load checkpoint from %s' % args.checkpoint)
-
-    if args.check_samples_tau:
-        image_tau_array = []
-        text_tau_array = []
-
-        model.eval() 
-    
-        with torch.no_grad():
-            for image, text, idx, text_idx in tqdm(train_loader):
-                image = image.to(device)
-                text = tokenizer(text, padding='max_length', truncation=True, max_length=30, return_tensors="pt").to(device)
-
-                image_feat = F.normalize(model.vision_proj(model.visual_encoder(image)), dim=-1)
-                text_output = model.text_encoder(text.input_ids, attention_mask=text.attention_mask, output_hidden_states=False)
-                text_feat = F.normalize(model.text_proj(text_output.last_hidden_state[:,0,:]), dim=-1)
-            
-                tau_image = model.criterion.image_temp_gen(image_feat).cpu().squeeze().numpy()
-                tau_text = model.criterion.text_temp_gen(text_feat).cpu().squeeze().numpy()
-
-                image_tau_array.append(tau_image)
-                text_tau_array.append(tau_text)
-
-            image_tau_array = np.concatenate(image_tau_array) 
-            text_tau_array = np.concatenate(text_tau_array)
-
-        with open(os.path.join(args.output_dir, "tau.pkl"), "wb") as f:
-            pickle.dump({"tau_image":image_tau_array, "tau_text":text_tau_array}, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-        assert 0
 
     optimizer = create_optimizer(args, model)
     lr_scheduler, _ = create_scheduler(args, optimizer)
@@ -476,8 +373,7 @@ def main(args):
         if not args.evaluate:
             if args.distributed:
                 train_loader.sampler.set_epoch(epoch)
-            train_stats = train(model, train_loader, optimizer, tokenizer, epoch, max_epoch, warmup_steps, device, lr_scheduler, 
-                                grad_scaler, args)
+            train_stats = train(model, train_loader, optimizer, tokenizer, epoch, max_epoch, warmup_steps, device, lr_scheduler, grad_scaler)
             
         score_val_i2t_coco, score_val_t2i_coco = evaluation(model_without_ddp, val_coco_loader, tokenizer, device, args)
         score_test_i2t_coco, score_test_t2i_coco = evaluation(model_without_ddp, test_coco_loader, tokenizer, device, args)
@@ -485,8 +381,7 @@ def main(args):
         score_val_i2t_flickr, score_val_t2i_flickr = evaluation(model_without_ddp, val_flickr_loader, tokenizer, device, args)
         score_test_i2t_flickr, score_test_t2i_flickr = evaluation(model_without_ddp, test_flickr_loader, tokenizer, device, args)
 
-        if args.evaluate:
-            zeroshot_results = zeroshot_transfer(model_without_ddp, zeroshot_dataloader, args.zs_dataset, tokenizer, device)
+        zeroshot_results = zeroshot_transfer(model_without_ddp, zeroshot_dataloader, args.zs_dataset, tokenizer, device)
     
         if utils.is_main_process():  
       
@@ -495,14 +390,13 @@ def main(args):
             test_result_coco = itm_eval(score_test_i2t_coco, score_test_t2i_coco, test_coco_loader.dataset.txt2img, test_coco_loader.dataset.img2txt)    
             print("coco test:", test_result_coco)
 
-            if args.evaluate:
-                val_result_flickr = itm_eval(score_val_i2t_flickr, score_val_t2i_flickr, val_flickr_loader.dataset.txt2img, val_flickr_loader.dataset.img2txt)  
-                print("flickr val:", val_result_flickr)
-                test_result_flickr = itm_eval(score_test_i2t_flickr, score_test_t2i_flickr, test_flickr_loader.dataset.txt2img, test_flickr_loader.dataset.img2txt)    
-                print("flickr test:", test_result_flickr)
+            val_result_flickr = itm_eval(score_val_i2t_flickr, score_val_t2i_flickr, val_flickr_loader.dataset.txt2img, val_flickr_loader.dataset.img2txt)  
+            print("flickr val:", val_result_flickr)
+            test_result_flickr = itm_eval(score_test_i2t_flickr, score_test_t2i_flickr, test_flickr_loader.dataset.txt2img, test_flickr_loader.dataset.img2txt)    
+            print("flickr test:", test_result_flickr)
 
             # save tau for visualization
-            if not args.evaluate and args.store_tau and (epoch+1)%10==0:
+            if not args.evaluate and args.ita_type == 'sogclr_dro' and (epoch+1)%5==0:
                 print("saving tau...")
                 tau_image = model_without_ddp.criterion.tau_I.clone().cpu().numpy()
                 tau_text = model_without_ddp.criterion.tau_T.clone().cpu().numpy()
@@ -540,7 +434,19 @@ def main(args):
                 with open(os.path.join(args.output_dir, "coco_log.txt"),"a") as f:
                     f.write(json.dumps(log_stats) + "\n")
 
-                if val_result_coco['r_mean'] > best:
+                log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
+                             **{f'val_{k}': v for k, v in val_result_flickr.items()},
+                             **{f'test_{k}': v for k, v in test_result_flickr.items()},                  
+                             'epoch': epoch,
+                             'data': 'flickr',
+                            }
+                with open(os.path.join(args.output_dir, "flickr_log.txt"),"a") as f:
+                    f.write(json.dumps(log_stats) + "\n")   
+
+                with open(os.path.join(args.output_dir, f"zeroshot_{args.zs_dataset}_log.txt"), "a") as f:
+                    f.write(json.dumps(zeroshot_results) + "\n")
+                    
+                if val_result_coco['r_mean']>best:
                     save_obj = {
                         'model': model_without_ddp.state_dict(),
                         'optimizer': optimizer.state_dict(),
@@ -551,12 +457,6 @@ def main(args):
                     torch.save(save_obj, os.path.join(args.output_dir, 'checkpoint_best.pth'))  
                     best = val_result_coco['r_mean']    
                     best_epoch = epoch
-
-                if (epoch+1) % 10 == 0:
-                    save_obj = {
-                        'model': model_without_ddp.state_dict()
-                    }
-                    torch.save(save_obj, os.path.join(args.output_dir, 'checkpoint_'+str(epoch+1)+'.pth'))
                     
         if args.evaluate: 
             break
@@ -586,32 +486,29 @@ if __name__ == '__main__':
     parser.add_argument('--bert_config', default='configs/config_bert.json')
     parser.add_argument('--image_encoder', default='resnet50')
     parser.add_argument('--text_encoder', default='distilbert-base-uncased')
-    parser.add_argument('--image_res', default=256, type=int)
-    parser.add_argument('--vision_width', default=768, type=int)
-    parser.add_argument('--embed_dim', default=256, type=int)
+    parser.add_argument('--image_res', default=256)
+    parser.add_argument('--vision_width', default=768)
+    parser.add_argument('--embed_dim', default=256)
 
     # optimizer and schedular
     parser.add_argument('--opt', default='adamW')
     parser.add_argument('--sched', default='cosine')
     parser.add_argument('--lr', default=2e-4, type=float)
-    parser.add_argument('--lr_temp_net', default=1e-6, type=float)
-    parser.add_argument('--wd_temp_net', default=1e-3, type=float,
-                        help='weight decay for temperature network')
-    parser.add_argument('--min_lr', default=1e-6, type=float)
+    parser.add_argument('--min_lr', default=1e-5, type=float)
     parser.add_argument('--warmup', default=True, type=bool)
-    parser.add_argument('--warmup_lr', default=1e-5, type=float)
-    parser.add_argument('--weight_decay', default=0.02, type=float)
-    parser.add_argument('--decay_rate', default=1, type=float)
+    parser.add_argument('--warmup_lr', default=1e-5)
+    parser.add_argument('--weight_decay', default=0.02)
+    parser.add_argument('--decay_rate', default=1)
     parser.add_argument('--epochs', default=30, type=int)
-    parser.add_argument('--warmup_epochs', default=20, type=int)
-    parser.add_argument('--cooldown_epochs', default=0, type=int)
+    parser.add_argument('--warmup_epochs', default=20)
+    parser.add_argument('--cooldown_epochs', default=0)
 
     # training & test settings
     parser.add_argument('--use_amp', action='store_true')
     parser.add_argument('--init_model', action='store_true')
-    parser.add_argument('--batch_size_train', default=256, type=int)
-    parser.add_argument('--batch_size_test', default=256, type=int)
-    parser.add_argument('--k_test', default=256, type=int)
+    parser.add_argument('--batch_size_train', default=256)
+    parser.add_argument('--batch_size_test', default=256)
+    parser.add_argument('--k_test', default=256)
     parser.add_argument('--evaluate', action='store_true')
     parser.add_argument('--checkpoint', default='', type=str)
     parser.add_argument('--device', default='cuda')
@@ -624,41 +521,26 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default='./output/clip_test')  
 
     # loss config
-    parser.add_argument('--ita_type', required=True, choices=['clip', 'cyclip', 'vicreg', 'sogclr', 'sogclr_dro', 
-                        'isogclr_new_v2', 'isogclr_new_v1', 'isogclr_new', 'onlineclr'])
+    parser.add_argument('--ita_type', required=True, choices=['clip', 'cyclip', 'vicreg', 'sogclr', 'sogclr_dro'])
     parser.add_argument('--vicreg_sim_coeff', default=25.0, type=float)
     parser.add_argument('--vicreg_std_coeff', default=25.0, type=float)
     parser.add_argument('--sogclr_gamma', default=0.8, type=float)
-    parser.add_argument('--rho_I', default=8.0, type=float)
-    parser.add_argument('--rho_T', default=8.0, type=float)
+    parser.add_argument('--rho_init', default=8.0, type=float)
     parser.add_argument('--eta_init', default=0.001, type=float)
     parser.add_argument('--tau_init', default=0.01, type=float)
+    parser.add_argument('--eta_sched', choices=['const', 'cosine', 'exp'])
+    parser.add_argument('--eta_exp_gamma', default=0.8, type=float)
     parser.add_argument('--beta_u', default=0.9, type=float)
     parser.add_argument('--temp', default=0.01, type=float)
     parser.add_argument('--learnable_temp', action='store_true')
     parser.add_argument('--personalized_tau', action='store_true')
-    parser.add_argument('--max_norm', default=1.0, type=float)
-    parser.add_argument('--store_tau', action='store_true')
-    parser.add_argument('--isogclr_temp_net', action='store_true')
-    parser.add_argument('--alpha', default=1.0, type=float, help='for isogclr_denoise')
-
-    # set the fraction of data used for training
-    parser.add_argument('--train_frac', default=1.0, type=float)
-
-    # check samples with high/low temperature values
-    parser.add_argument('--check_samples_tau', action='store_true')
-
-    # extract data from the cc3m dataset
-    parser.add_argument('--extract_data', action='store_true')
+    parser.add_argument('--enable_surrogate', action='store_true')
 
     # zero-shot transfer
     parser.add_argument('--zs_dataset', required=True, choices=['cifar10', 'cifar100', 'imagenet'])
     parser.add_argument('--zs_datafolder', default='./datasets', type=str)
 
     args = parser.parse_args()
-
-    if args.check_samples_tau:
-        args.evaluate = True
 
     args.train_file = os.path.join(args.data_path, args.train_file)
     args.train_image_root = os.path.join(args.data_path, args.train_image_root)
@@ -670,8 +552,6 @@ if __name__ == '__main__':
     args.test_flickr_file = os.path.join(args.data_path, 'clip_train/flickr30k_test.json')
     args.flickr_image_root = os.path.join(args.data_path, 'flickr30k')
 
-    args.sbu_file = os.path.join(args.data_path, 'clip_train/sbu_train_new.json')
-    args.sbu_image_root = os.path.join(args.data_path, 'sbu')
 
     Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
