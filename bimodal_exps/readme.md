@@ -35,36 +35,29 @@ After downloading the data, one needs to organize the data folder as follows:
 
 
 ## Training
+Below is an example for self-supervised pre-training of a CLIP model on CC3M with 2 GPUs.
+
 ```bash
 TRANSFORMERS_OFFLINE=1
-data_path=/data1/VLP             
-imagenet_val_path=/data1/imagenet/val
+data_path=/path/to/your/data
 train_image_root=cc3m
 data=cc3m
 train_file=clip_train/${data}_train_new.json
-lr=8e-4
-frac=1.0
-desc=isogclr_tempnet
 gamma=0.8
-rho=7.0
+rho=6.0
 
-CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python -m torch.distributed.launch --nproc_per_node=8 --master_port=4820 \
+CUDA_VISIBLE_DEVICES=6,7 python -m torch.distributed.launch --nproc_per_node=2 --master_port=9800 \
     --use_env clip.py \
     --data_path ${data_path} \
-    --data ${data} \
     --train_file ${train_file} \
-    --train_image_root ${train_image_root} \
-    --output_dir output/isogclr_tempnet_${data}_gamma${gamma}_rho${rho}_${desc} \
+    --train_image_root ${data} \
+    --output_dir output/isogclr_${data}_g${gamma}_rho${rho}_0.01 \
     --init_model \
     --use_amp \
-    --epochs 30 --lr ${lr} \
-    --lr_temp_net 3e-5 \
-    --rho ${rho} \
-    --train_frac ${frac} \
-    --zs_dataset imagenet \
-    --zs_datafolder ${imagenet_val_path} \
-    --ita_type isogclr_tempnet \
-    --sogclr_gamma ${gamma} > isogclr_tempnet_${data}_gamma${gamma}_rho${rho}_${desc}.log &
+    --ita_type new_isogclr \
+    --tau_init 0.01 \
+    --sogclr_gamma ${gamma} --rho_init ${rho} \
+    --eta_init 0.03 --eta_sched const > ${data}_isogclr_g${gamma}_rho${rho}_0.01.log &
 ```
 
 
@@ -78,8 +71,8 @@ data=cc3m
 gamma=0.8
 rho=8.0
 train_file=clip_train/${data}_train_new.json
-desc=isogclr_tempnet
-saved_model=isogclr_tempnet_${data}_gamma${gamma}_rho${rho}_${desc}
+
+saved_model=isogclr_${data}_g${gamma}_rho${rho}_0.01
 
 zs_dataset=cifar10
 
